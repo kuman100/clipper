@@ -146,7 +146,7 @@ if st.session_state.video_info:
     col_left, col_right = st.columns([1, 1.5])
     
     with col_left:
-        st.image(info['thumbnail'], use_container_width=True)
+        st.image(info['thumbnail'])
         st.subheader(info['title'])
         st.caption(f"Channel: {info['uploader']} | Durasi Asli: {format_seconds(info['duration'])}")
         
