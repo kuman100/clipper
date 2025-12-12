@@ -5,36 +5,16 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import download_range_func
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(
-    page_title="Clipper Pro",
-    page_icon="🎬",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-# --- CSS CUSTOM ---
-st.markdown("""
-<style>
-    .stButton>button {
-        width: 100%;
-        border-radius: 10px;
-        height: 3em;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Clipper Pro", page_icon="🎬", layout="wide")
 
 # --- FUNGSI UTAMA ---
-
-def format_seconds(seconds):
-    """Mengubah detik ke format MM:SS"""
-    m = int(seconds // 60)
-    s = int(seconds % 60)
-    return f"{m:02d}:{s:02d}"
-
 def get_video_info(url):
-    """Mengambil data video tanpa download"""
-    ydl_opts = {'quiet': True}
+    # Opsi ringan hanya untuk ambil judul
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    }
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -43,7 +23,7 @@ def get_video_info(url):
         return None
 
 def process_video(url, start_str, end_str, resolution, format_type):
-    # 1. Parsing Waktu
+    # 1. Konversi Waktu
     def to_seconds(t_str):
         try:
             parts = list(map(int, t_str.split(':')))
@@ -57,138 +37,77 @@ def process_video(url, start_str, end_str, resolution, format_type):
     end_sec = to_seconds(end_str)
     
     if start_sec >= end_sec:
-        return None, "⚠️ Waktu Selesai harus lebih besar dari Waktu Mulai!"
+        return None, "⚠️ Waktu Selesai harus lebih besar!"
 
-    # 2. Setup Filename
-    ext = "mp4" if format_type == "Video (MP4)" else "mp3"
-    filename = f"clip_{int(time.time())}.{ext}"
+    filename = f"clip_{int(time.time())}.mp4"
     
-    # 3. Konfigurasi yt-dlp
+    # 2. Konfigurasi yt-dlp (MODE AMAN)
     ydl_opts = {
         'outtmpl': filename,
         'download_ranges': download_range_func(None, [(start_sec, end_sec)]),
-        'force_keyframes_at_cuts': False, 
-        'quiet': True,
+        'force_keyframes_at_cuts': False, # Cepat & Ringan
+        'quiet': False, # Nyalakan log biar kelihatan kalau error
+        'verbose': True, # Debugging mode
         'nocheckcertificate': True,
+        # Header palsu biar YouTube tidak curiga
+        'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'},
     }
 
-    # --- LOGIKA CERDAS FFMPEG ---
-    # Jika di Windows (Local) dan ada file ffmpeg.exe, pakai itu.
-    # Jika di Cloud (Linux), biarkan kosong (dia akan cari di sistem /usr/bin/ffmpeg).
-    if os.name == 'nt' and os.path.exists("ffmpeg.exe"):
-        ydl_opts['ffmpeg_location'] = "ffmpeg.exe"
-
-    # Pengaturan Format
+    # 3. Logika Format (PENTING UNTUK MENGHINDARI ERROR FFMPEG)
     if format_type == "Video (MP4)":
-        ydl_opts['format'] = f'best[ext=mp4][height<={resolution}]/best[ext=mp4]'
+        if resolution == "1080":
+            # 1080p sering bikin crash di cloud gratisan, hati-hati
+            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        else:
+            # Pilih format yang SUDAH jadi satu (tidak perlu merge ffmpeg berat)
+            # Ini trik agar tidak kena error "exited with code 1"
+            ydl_opts['format'] = f'best[ext=mp4][height<={resolution}]'
     else:
         ydl_opts['format'] = 'bestaudio/best'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
         }]
+        filename = f"clip_{int(time.time())}.mp3"
+
+    # Hapus lokasi ffmpeg manual (biarkan sistem Linux mendeteksi sendiri)
+    # Kita hapus blok if os.name == 'nt' agar bersih di Cloud.
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-        
-        # Koreksi nama file untuk MP3
-        if format_type == "Audio Only (MP3)" and not os.path.exists(filename):
-            filename = filename.replace(".mp3", "") + ".mp3"
-            
         return filename, "Success"
     except Exception as e:
         return None, str(e)
 
 # --- UI HEADER ---
-st.title("🎬 YouTube Clipper Pro")
-st.markdown("Potong video YouTube dengan cepat & mudah.")
-st.divider()
+st.title("✂️ YouTube Clipper (Safe Mode)")
+st.caption("Tips: Jika error, coba turunkan resolusi ke 360p atau 480p.")
 
-if 'video_info' not in st.session_state:
-    st.session_state.video_info = None
+# --- INPUT ---
+url = st.text_input("Link YouTube:", placeholder="https://...")
+col1, col2 = st.columns(2)
+start_time = col1.text_input("Mulai", "00:00")
+end_time = col2.text_input("Selesai", "00:30")
+fmt = st.selectbox("Format", ["Video (MP4)", "Audio Only (MP3)"])
+res = st.selectbox("Resolusi (Pilih rendah jika error)", ["360", "480", "720", "1080"], index=2, disabled="Audio" in fmt)
 
-# --- KOLOM INPUT URL ---
-col_url, col_btn = st.columns([4, 1])
-with col_url:
-    url_input = st.text_input("Tempel Link YouTube:", placeholder="https://youtube.com/...")
-
-with col_btn:
-    st.write("")
-    st.write("")
-    if st.button("🔍 Cek Video"):
-        if not url_input:
-            st.toast("Masukkan link dulu!", icon="❌")
-        else:
-            with st.spinner("Sedang mengambil data..."):
-                info = get_video_info(url_input)
-                if info:
-                    st.session_state.video_info = info
-                    st.toast("Video ditemukan!", icon="✅")
-                else:
-                    st.error("Gagal memuat video.")
-
-st.divider()
-
-# --- DASHBOARD UTAMA ---
-if st.session_state.video_info:
-    info = st.session_state.video_info
-    
-    col_left, col_right = st.columns([1, 1.5])
-    
-    with col_left:
-        # Menghapus parameter use_container_width agar tidak warning
-        st.image(info['thumbnail']) 
-        st.subheader(info['title'])
-        st.caption(f"Durasi: {format_seconds(info['duration'])}")
-        
-        with st.expander("🎥 Preview Video Asli"):
-            st.video(url_input)
-
-    with col_right:
-        st.markdown("### ✂️ Pengaturan Potongan")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            start_time = st.text_input("⏱️ Mulai (MM:SS)", "00:00")
-        with c2:
-            end_time = st.text_input("⏱️ Selesai (MM:SS)", "00:30")
+if st.button("🚀 Potong Video", type="primary"):
+    if not url:
+        st.error("Link kosong!")
+    else:
+        with st.spinner("Sedang memproses..."):
+            file_result, msg = process_video(url, start_time, end_time, res, fmt)
             
-        c3, c4 = st.columns(2)
-        with c3:
-            fmt = st.selectbox("📂 Format", ["Video (MP4)", "Audio Only (MP3)"])
-        with c4:
-            res = st.selectbox("📺 Resolusi", ["360", "480", "720", "1080"], index=2, disabled=(fmt=="Audio Only (MP3)"))
-
-        st.write("")
-        
-        if st.button("🚀 PROSES KLIP", type="primary"):
-            with st.status("Sedang memproses...", expanded=True) as status:
-                st.write("⬇️ Mendownload & Memotong...")
-                
-                file_result, msg = process_video(url_input, start_time, end_time, res, fmt)
-                
-                if file_result and os.path.exists(file_result):
-                    status.update(label="Selesai!", state="complete", expanded=False)
-                    st.balloons()
-                    st.success("✅ Berhasil!")
-                    
-                    if fmt == "Video (MP4)":
-                        st.video(file_result)
-                    else:
-                        st.audio(file_result)
-                        
-                    with open(file_result, "rb") as f:
-                        st.download_button(
-                            label="⬇️ Download File",
-                            data=f,
-                            file_name=f"clip_hasil.{'mp4' if 'Video' in fmt else 'mp3'}",
-                            mime=f"application/{'mp4' if 'Video' in fmt else 'mp3'}"
-                        )
+            if file_result and os.path.exists(file_result):
+                st.success("✅ Berhasil!")
+                if "mp4" in file_result:
+                    st.video(file_result)
                 else:
-                    status.update(label="Gagal", state="error")
-                    st.error(f"Error: {msg}")
-
-else:
-    st.info("👆 Masukkan link di atas untuk memulai.")
+                    st.audio(file_result)
+                
+                with open(file_result, "rb") as f:
+                    st.download_button("⬇️ Download", f, file_name=file_result)
+            else:
+                st.error(f"Gagal: {msg}")
+                st.warning("⚠️ Tips Perbaikan: Coba pilih resolusi '360' atau '480'. Resolusi tinggi sering gagal di server gratis.")
